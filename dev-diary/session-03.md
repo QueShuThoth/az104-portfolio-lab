@@ -24,6 +24,10 @@
 - Apply output and terraform.tfstate both contain the subscription ID: blur it in recordings, and keep tfstate out of Git (.gitignore already does)
 - Full deploy-and-teardown loop works, so I can build and destroy per session and keep costs near zero
 
+## Focus going forward
+- Primary: FinOps and cost optimization (Well-Architected Framework)
+- Secondary: security, operational performance
+
 ## Azure cost check
 - Resources left running: none
 - `terraform destroy` run: yes
