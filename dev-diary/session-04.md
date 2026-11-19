@@ -10,10 +10,10 @@
 - `terraform fmt`, `terraform validate`, `terraform plan`: Plan 4 to add
 - `terraform apply`: hub resource group, VNet and both subnets created
 - Portal check: vnet-hub-eus > Subnets shows both ✅
-- `terraform destroy`: everything removed
+- `terraform destroy`: 4 resources removed in about 11 seconds
 
 ## What broke
-- Nothing reported
+- `terraform fmt` flagged a formatting issue where the new blocks were pasted (needed a new line after a block). Added the line, re-ran, clean after that
 
 ## What I learned
 - Azure only places a VPN gateway in a subnet named exactly GatewaySubnet, and a firewall in one named exactly AzureFirewallSubnet
