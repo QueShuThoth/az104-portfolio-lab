@@ -71,3 +71,22 @@ resource "azurerm_virtual_network_peering" "spoke1_to_hub" {
   remote_virtual_network_id = azurerm_virtual_network.hub.id
   allow_forwarded_traffic   = true
 }
+
+resource "azurerm_resource_group" "spoke2" {
+  name     = "rg-lab-spoke2-wus"
+  location = "westus"
+}
+
+resource "azurerm_virtual_network" "spoke2" {
+  name                = "vnet-spoke2-wus"
+  location            = azurerm_resource_group.spoke2.location
+  resource_group_name = azurerm_resource_group.spoke2.name
+  address_space       = ["10.2.0.0/16"]
+}
+
+resource "azurerm_subnet" "spoke2_workload" {
+  name                 = "snet-workload"
+  resource_group_name  = azurerm_resource_group.spoke2.name
+  virtual_network_name = azurerm_virtual_network.spoke2.name
+  address_prefixes     = ["10.2.1.0/24"]
+}
