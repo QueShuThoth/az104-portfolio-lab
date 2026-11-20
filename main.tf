@@ -152,3 +152,37 @@ resource "azurerm_subnet_network_security_group_association" "spoke2_workload" {
   subnet_id                 = azurerm_subnet.spoke2_workload.id
   network_security_group_id = azurerm_network_security_group.spoke2.id
 }
+
+variable "enable_vpn_gateway" {
+  description = "Turn the VPN gateway on (true) or off (false). It bills by the hour."
+  type        = bool
+  default     = false
+}
+
+resource "azurerm_public_ip" "vpngw" {
+  count               = var.enable_vpn_gateway ? 1 : 0
+  name                = "pip-vpngw-hub-eus"
+  location            = azurerm_resource_group.hub.location
+  resource_group_name = azurerm_resource_group.hub.name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+}
+
+resource "azurerm_virtual_network_gateway" "hub" {
+  count               = var.enable_vpn_gateway ? 1 : 0
+  name                = "vpngw-hub-eus"
+  location            = azurerm_resource_group.hub.location
+  resource_group_name = azurerm_resource_group.hub.name
+  type                = "Vpn"
+  vpn_type            = "RouteBased"
+  sku                 = "Basic"
+  generation          = "Generation1"
+  active_active       = false
+
+  ip_configuration {
+    name                          = "vnetGatewayConfig"
+    public_ip_address_id          = azurerm_public_ip.vpngw[0].id
+    private_ip_address_allocation = "Dynamic"
+    subnet_id                     = azurerm_subnet.gateway.id
+  }
+}
