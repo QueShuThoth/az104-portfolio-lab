@@ -106,3 +106,49 @@ resource "azurerm_virtual_network_peering" "spoke2_to_hub" {
   remote_virtual_network_id = azurerm_virtual_network.hub.id
   allow_forwarded_traffic   = true
 }
+
+resource "azurerm_network_security_group" "spoke1" {
+  name                = "nsg-spoke1-eus"
+  location            = azurerm_resource_group.spoke1.location
+  resource_group_name = azurerm_resource_group.spoke1.name
+
+  security_rule {
+    name                       = "Allow-SSH-From-Hub"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "22"
+    source_address_prefix      = "10.0.0.0/16"
+    destination_address_prefix = "*"
+  }
+}
+
+resource "azurerm_subnet_network_security_group_association" "spoke1_workload" {
+  subnet_id                 = azurerm_subnet.spoke1_workload.id
+  network_security_group_id = azurerm_network_security_group.spoke1.id
+}
+
+resource "azurerm_network_security_group" "spoke2" {
+  name                = "nsg-spoke2-wus"
+  location            = azurerm_resource_group.spoke2.location
+  resource_group_name = azurerm_resource_group.spoke2.name
+
+  security_rule {
+    name                       = "Allow-SSH-From-Hub"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "22"
+    source_address_prefix      = "10.0.0.0/16"
+    destination_address_prefix = "*"
+  }
+}
+
+resource "azurerm_subnet_network_security_group_association" "spoke2_workload" {
+  subnet_id                 = azurerm_subnet.spoke2_workload.id
+  network_security_group_id = azurerm_network_security_group.spoke2.id
+}
