@@ -186,3 +186,100 @@ resource "azurerm_virtual_network_gateway" "hub" {
     subnet_id                     = azurerm_subnet.gateway.id
   }
 }
+
+variable "vpn_shared_key" {
+  description = "Shared key for the S2S connection. Set with TF_VAR_vpn_shared_key, never in a file."
+  type        = string
+  sensitive   = true
+  default     = null
+}
+
+# Simulated on-prem network (free)
+resource "azurerm_resource_group" "onprem" {
+  name     = "rg-lab-onprem-eus"
+  location = "eastus"
+}
+
+resource "azurerm_virtual_network" "onprem" {
+  name                = "vnet-onprem-eus"
+  location            = azurerm_resource_group.onprem.location
+  resource_group_name = azurerm_resource_group.onprem.name
+  address_space       = ["192.168.0.0/16"]
+}
+
+resource "azurerm_subnet" "onprem_gateway" {
+  name                 = "GatewaySubnet"
+  resource_group_name  = azurerm_resource_group.onprem.name
+  virtual_network_name = azurerm_virtual_network.onprem.name
+  address_prefixes     = ["192.168.1.0/27"]
+}
+
+# On-prem "VPN device" (bills by the hour, same toggle)
+resource "azurerm_public_ip" "onprem_vpngw" {
+  count               = var.enable_vpn_gateway ? 1 : 0
+  name                = "pip-vpngw-onprem-eus"
+  location            = azurerm_resource_group.onprem.location
+  resource_group_name = azurerm_resource_group.onprem.name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+}
+
+resource "azurerm_virtual_network_gateway" "onprem" {
+  count               = var.enable_vpn_gateway ? 1 : 0
+  name                = "vpngw-onprem-eus"
+  location            = azurerm_resource_group.onprem.location
+  resource_group_name = azurerm_resource_group.onprem.name
+  type                = "Vpn"
+  vpn_type            = "RouteBased"
+  sku                 = "Basic"
+  generation          = "Generation1"
+  active_active       = false
+  ip_configuration {
+    name                          = "vnetGatewayConfig"
+    public_ip_address_id          = azurerm_public_ip.onprem_vpngw[0].id
+    private_ip_address_allocation = "Dynamic"
+    subnet_id                     = azurerm_subnet.onprem_gateway.id
+  }
+}
+
+# Each side's record of the other side
+resource "azurerm_local_network_gateway" "onprem" {
+  count               = var.enable_vpn_gateway ? 1 : 0
+  name                = "lng-onprem-eus"
+  location            = azurerm_resource_group.hub.location
+  resource_group_name = azurerm_resource_group.hub.name
+  gateway_address     = azurerm_public_ip.onprem_vpngw[0].ip_address
+  address_space       = ["192.168.0.0/16"]
+}
+
+resource "azurerm_local_network_gateway" "hub" {
+  count               = var.enable_vpn_gateway ? 1 : 0
+  name                = "lng-hub-eus"
+  location            = azurerm_resource_group.onprem.location
+  resource_group_name = azurerm_resource_group.onprem.name
+  gateway_address     = azurerm_public_ip.vpngw[0].ip_address
+  address_space       = ["10.0.0.0/16"]
+}
+
+# The tunnel, one connection from each end
+resource "azurerm_virtual_network_gateway_connection" "hub_to_onprem" {
+  count                      = var.enable_vpn_gateway ? 1 : 0
+  name                       = "cn-hub-to-onprem"
+  location                   = azurerm_resource_group.hub.location
+  resource_group_name        = azurerm_resource_group.hub.name
+  type                       = "IPsec"
+  virtual_network_gateway_id = azurerm_virtual_network_gateway.hub[0].id
+  local_network_gateway_id   = azurerm_local_network_gateway.onprem[0].id
+  shared_key                 = var.vpn_shared_key
+}
+
+resource "azurerm_virtual_network_gateway_connection" "onprem_to_hub" {
+  count                      = var.enable_vpn_gateway ? 1 : 0
+  name                       = "cn-onprem-to-hub"
+  location                   = azurerm_resource_group.onprem.location
+  resource_group_name        = azurerm_resource_group.onprem.name
+  type                       = "IPsec"
+  virtual_network_gateway_id = azurerm_virtual_network_gateway.onprem[0].id
+  local_network_gateway_id   = azurerm_local_network_gateway.hub[0].id
+  shared_key                 = var.vpn_shared_key
+}
