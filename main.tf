@@ -283,3 +283,65 @@ resource "azurerm_virtual_network_gateway_connection" "onprem_to_hub" {
   local_network_gateway_id   = azurerm_local_network_gateway.hub[0].id
   shared_key                 = var.vpn_shared_key
 }
+
+variable "enable_firewall" {
+  description = "Turn Azure Firewall on (true) or off (false). It bills by the hour."
+  type        = bool
+  default     = false
+}
+
+# Management subnet that Basic tier requires (free)
+resource "azurerm_subnet" "firewall_mgmt" {
+  name                 = "AzureFirewallManagementSubnet"
+  resource_group_name  = azurerm_resource_group.hub.name
+  virtual_network_name = azurerm_virtual_network.hub.name
+  address_prefixes     = ["10.0.3.0/26"]
+}
+
+resource "azurerm_public_ip" "firewall" {
+  count               = var.enable_firewall ? 1 : 0
+  name                = "pip-afw-hub-eus"
+  location            = azurerm_resource_group.hub.location
+  resource_group_name = azurerm_resource_group.hub.name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+}
+
+resource "azurerm_public_ip" "firewall_mgmt" {
+  count               = var.enable_firewall ? 1 : 0
+  name                = "pip-afw-mgmt-hub-eus"
+  location            = azurerm_resource_group.hub.location
+  resource_group_name = azurerm_resource_group.hub.name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+}
+
+resource "azurerm_firewall_policy" "hub" {
+  count               = var.enable_firewall ? 1 : 0
+  name                = "afwp-hub-eus"
+  location            = azurerm_resource_group.hub.location
+  resource_group_name = azurerm_resource_group.hub.name
+  sku                 = "Basic"
+}
+
+resource "azurerm_firewall" "hub" {
+  count               = var.enable_firewall ? 1 : 0
+  name                = "afw-hub-eus"
+  location            = azurerm_resource_group.hub.location
+  resource_group_name = azurerm_resource_group.hub.name
+  sku_name            = "AZFW_VNet"
+  sku_tier            = "Basic"
+  firewall_policy_id  = azurerm_firewall_policy.hub[0].id
+
+  ip_configuration {
+    name                 = "afw-ipconfig"
+    subnet_id            = azurerm_subnet.firewall.id
+    public_ip_address_id = azurerm_public_ip.firewall[0].id
+  }
+
+  management_ip_configuration {
+    name                 = "afw-mgmt-ipconfig"
+    subnet_id            = azurerm_subnet.firewall_mgmt.id
+    public_ip_address_id = azurerm_public_ip.firewall_mgmt[0].id
+  }
+}
