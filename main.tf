@@ -345,3 +345,90 @@ resource "azurerm_firewall" "hub" {
     public_ip_address_id = azurerm_public_ip.firewall_mgmt[0].id
   }
 }
+
+# Firewall rule: let the two spokes talk to each other
+resource "azurerm_firewall_policy_rule_collection_group" "spokes" {
+  count              = var.enable_firewall ? 1 : 0
+  name               = "rcg-spokes"
+  firewall_policy_id = azurerm_firewall_policy.hub[0].id
+  priority           = 200
+
+  network_rule_collection {
+    name     = "allow-spoke-to-spoke"
+    priority = 100
+    action   = "Allow"
+
+    rule {
+      name                  = "spoke1-to-spoke2"
+      protocols             = ["Any"]
+      source_addresses      = ["10.1.0.0/16"]
+      destination_addresses = ["10.2.0.0/16"]
+      destination_ports     = ["*"]
+    }
+
+    rule {
+      name                  = "spoke2-to-spoke1"
+      protocols             = ["Any"]
+      source_addresses      = ["10.2.0.0/16"]
+      destination_addresses = ["10.1.0.0/16"]
+      destination_ports     = ["*"]
+    }
+  }
+}
+
+# Route tables: send spoke traffic to the firewall
+resource "azurerm_route_table" "spoke1" {
+  count                         = var.enable_firewall ? 1 : 0
+  name                          = "rt-spoke1-eus"
+  location                      = azurerm_resource_group.spoke1.location
+  resource_group_name           = azurerm_resource_group.spoke1.name
+  bgp_route_propagation_enabled = false
+
+  route {
+    name                   = "to-spoke2-via-firewall"
+    address_prefix         = "10.2.0.0/16"
+    next_hop_type          = "VirtualAppliance"
+    next_hop_in_ip_address = azurerm_firewall.hub[0].ip_configuration[0].private_ip_address
+  }
+
+  route {
+    name                   = "to-internet-via-firewall"
+    address_prefix         = "0.0.0.0/0"
+    next_hop_type          = "VirtualAppliance"
+    next_hop_in_ip_address = azurerm_firewall.hub[0].ip_configuration[0].private_ip_address
+  }
+}
+
+resource "azurerm_route_table" "spoke2" {
+  count                         = var.enable_firewall ? 1 : 0
+  name                          = "rt-spoke2-wus"
+  location                      = azurerm_resource_group.spoke2.location
+  resource_group_name           = azurerm_resource_group.spoke2.name
+  bgp_route_propagation_enabled = false
+
+  route {
+    name                   = "to-spoke1-via-firewall"
+    address_prefix         = "10.1.0.0/16"
+    next_hop_type          = "VirtualAppliance"
+    next_hop_in_ip_address = azurerm_firewall.hub[0].ip_configuration[0].private_ip_address
+  }
+
+  route {
+    name                   = "to-internet-via-firewall"
+    address_prefix         = "0.0.0.0/0"
+    next_hop_type          = "VirtualAppliance"
+    next_hop_in_ip_address = azurerm_firewall.hub[0].ip_configuration[0].private_ip_address
+  }
+}
+
+resource "azurerm_subnet_route_table_association" "spoke1_workload" {
+  count          = var.enable_firewall ? 1 : 0
+  subnet_id      = azurerm_subnet.spoke1_workload.id
+  route_table_id = azurerm_route_table.spoke1[0].id
+}
+
+resource "azurerm_subnet_route_table_association" "spoke2_workload" {
+  count          = var.enable_firewall ? 1 : 0
+  subnet_id      = azurerm_subnet.spoke2_workload.id
+  route_table_id = azurerm_route_table.spoke2[0].id
+}
