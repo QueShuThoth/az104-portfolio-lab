@@ -1,0 +1,1 @@
+This is a plain text file. The Event Grid filter only passes .md files, so uploading this should not wake the worker or add anything to Cosmos DB.

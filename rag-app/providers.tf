@@ -24,5 +24,12 @@ provider "azurerm" {
     log_analytics_workspace {
       permanently_delete_on_destroy = true
     }
+    # Session 23: the storage account has Shared Key turned off. Without this, Terraform
+    # tries to read queue and static-website settings with a key and gets "403 not permitted".
+    # With it off, Terraform manages the account and its containers only through
+    # Azure Resource Manager, which uses your Entra sign-in.
+    storage {
+      data_plane_available = false
+    }
   }
 }
