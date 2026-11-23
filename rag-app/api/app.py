@@ -1,4 +1,4 @@
-"""Dev Diary RAG API (Session 18).
+"""Dev Diary RAG API (Session 18, v2 in Session 21: one JSON log line per /ask).
 
 POST /ask {"question": "...", "session": 11}
   1. embed the question
@@ -8,7 +8,9 @@ POST /ask {"question": "...", "session": 11}
 No keys: DefaultAzureCredential uses your az login on the laptop, and the app's
 managed identity once it runs in Container Apps (Session 20).
 """
+import json
 import os
+import time
 
 from azure.cosmos import CosmosClient
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
@@ -59,6 +61,7 @@ def healthz():
 
 @app.post("/ask")
 def ask(req: AskRequest):
+    started = time.perf_counter()
     q_vec = ai.embeddings.create(model=EMBED_MODEL, input=req.question).data[0].embedding
 
     # Metadata filter + vector search in one query. The WHERE runs first, then the ranking.
@@ -87,6 +90,18 @@ def ask(req: AskRequest):
             {"role": "user", "content": f"Excerpts:\n{excerpts}\n\nQuestion: {req.question}"},
         ],
     )
+    # One structured log line per question. Container Apps ships stdout to Log Analytics,
+    # where KQL can parse it with parse_json(Log_s).
+    print(json.dumps({
+        "event": "ask",
+        "version": APP_VERSION,
+        "session_filter": req.session,
+        "top_source": hits[0]["source"],
+        "top_score": round(hits[0]["score"], 3),
+        "tokens": reply.usage.total_tokens,
+        "ms": round((time.perf_counter() - started) * 1000),
+    }), flush=True)
+
     return {
         "answer": reply.choices[0].message.content,
         "sources": [{"source": h["source"], "heading": h["heading"], "score": round(h["score"], 3)} for h in hits],
