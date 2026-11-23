@@ -6,6 +6,12 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 4.0"
     }
+    # Session 24: azapi talks straight to the Azure Resource Manager API.
+    # Used for the Flex Consumption function app only (see functions.tf for why).
+    azapi = {
+      source  = "Azure/azapi"
+      version = "~> 2.0"
+    }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.6"
@@ -24,12 +30,15 @@ provider "azurerm" {
     log_analytics_workspace {
       permanently_delete_on_destroy = true
     }
-    # Session 23: the storage account has Shared Key turned off. Without this, Terraform
+    # Session 23: the storage accounts have Shared Key turned off. Without this, Terraform
     # tries to read queue and static-website settings with a key and gets "403 not permitted".
-    # With it off, Terraform manages the account and its containers only through
+    # With it off, Terraform manages the accounts and their containers only through
     # Azure Resource Manager, which uses your Entra sign-in.
     storage {
       data_plane_available = false
     }
   }
 }
+
+# azapi also reads $env:ARM_SUBSCRIPTION_ID and your az login. Nothing to put here.
+provider "azapi" {}

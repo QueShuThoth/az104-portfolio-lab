@@ -6,3 +6,5 @@
 crash.log
 __pycache__/
 .venv/
+# Session 24: the function deployment package is built from function/, so don't commit the zip
+*.zip
