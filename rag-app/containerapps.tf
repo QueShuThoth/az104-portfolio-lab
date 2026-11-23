@@ -1,6 +1,7 @@
 # Session 20: Container Apps environment + the API app, with one user-assigned managed identity.
 # Session 21: multiple-revision mode, revisions named after the image tag (ca-rag-api--v2),
 #             and traffic splits set with the Azure CLI.
+# Session 25: the API reads its settings from App Configuration (APPCONFIG_ENDPOINT).
 # The environment and the identity are free on their own. The app sits behind enable_registry,
 # because it needs the image in the registry.
 
@@ -118,13 +119,23 @@ resource "azurerm_container_app" "api" {
         name  = "AZURE_CLIENT_ID"
         value = azurerm_user_assigned_identity.app.client_id
       }
+      env {
+        # Session 25: where the API loads chat_model, top_k and the admin key from
+        name  = "APPCONFIG_ENDPOINT"
+        value = azurerm_app_configuration.rag.endpoint
+      }
     }
   }
 
   tags = { project = "rag-app" }
 
-  # The identity must be allowed to pull before the first revision starts
-  depends_on = [azurerm_role_assignment.app_acr_pull]
+  # The identity must be allowed to pull before the first revision starts,
+  # and (Session 25) to read App Configuration and Key Vault when a new revision starts
+  depends_on = [
+    azurerm_role_assignment.app_acr_pull,
+    azurerm_role_assignment.app_appconfig_reader,
+    azurerm_role_assignment.app_kv_secrets_user,
+  ]
 
   lifecycle {
     # Traffic splits are set with az containerapp ingress traffic set (Session 21).

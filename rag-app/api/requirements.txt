@@ -3,3 +3,5 @@ uvicorn>=0.32
 openai>=1.60
 azure-identity>=1.19
 azure-cosmos>=4.9
+azure-appconfiguration-provider>=2.0
+azure-keyvault-secrets>=4.8
