@@ -1,0 +1,5 @@
+# Safety net for the rag-app folder (public repo)
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
