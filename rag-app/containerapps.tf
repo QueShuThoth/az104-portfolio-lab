@@ -2,6 +2,7 @@
 # Session 21: multiple-revision mode, revisions named after the image tag (ca-rag-api--v2),
 #             and traffic splits set with the Azure CLI.
 # Session 25: the API reads its settings from App Configuration (APPCONFIG_ENDPOINT).
+# Session 26: OpenTelemetry traces go to Application Insights (two new env vars).
 # The environment and the identity are free on their own. The app sits behind enable_registry,
 # because it needs the image in the registry.
 
@@ -124,6 +125,16 @@ resource "azurerm_container_app" "api" {
         name  = "APPCONFIG_ENDPOINT"
         value = azurerm_app_configuration.rag.endpoint
       }
+      env {
+        # Session 26: where OpenTelemetry sends traces (safe: local auth is off, see monitoring.tf)
+        name  = "APPLICATIONINSIGHTS_CONNECTION_STRING"
+        value = local.appi_connection_string
+      }
+      env {
+        # Session 26: the name this app gets on the Application Map
+        name  = "OTEL_SERVICE_NAME"
+        value = "rag-api"
+      }
     }
   }
 
@@ -135,6 +146,7 @@ resource "azurerm_container_app" "api" {
     azurerm_role_assignment.app_acr_pull,
     azurerm_role_assignment.app_appconfig_reader,
     azurerm_role_assignment.app_kv_secrets_user,
+    azurerm_role_assignment.app_monitoring_publisher,
   ]
 
   lifecycle {

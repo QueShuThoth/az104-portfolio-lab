@@ -1,4 +1,5 @@
 # Session 22: Service Bus Standard + the "ingest" queue + the worker app. Behind enable_messaging.
+# Session 26: the worker sends OpenTelemetry traces to Application Insights (two new env vars).
 # Standard (not Basic) because Basic has no topics. Keys off: Entra ID only.
 # Private endpoints would need Premium, so Service Bus stays on its public endpoint (Phase 2 decision).
 
@@ -120,12 +121,20 @@ resource "azurerm_container_app" "worker" {
         name  = "WORK_DELAY_SECONDS"
         value = "3"
       }
+      env {
+        name  = "APPLICATIONINSIGHTS_CONNECTION_STRING"
+        value = local.appi_connection_string
+      }
+      env {
+        name  = "OTEL_SERVICE_NAME"
+        value = "rag-worker"
+      }
     }
   }
 
   tags = { project = "rag-app" }
 
-  depends_on = [azurerm_role_assignment.app_acr_pull, azurerm_role_assignment.app_sb_owner]
+  depends_on = [azurerm_role_assignment.app_acr_pull, azurerm_role_assignment.app_sb_owner, azurerm_role_assignment.app_monitoring_publisher]
 }
 
 output "servicebus_name" {

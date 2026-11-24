@@ -1,4 +1,4 @@
-"""Dev Diary ingest worker (Session 22). No ingress: it only reads the Service Bus queue.
+"""Dev Diary ingest worker (Session 22; v2 Session 26: OpenTelemetry traces). No ingress: it only reads the Service Bus queue.
 
 Each message is one document to ingest. Two shapes are accepted:
   1. {"source": "note.md", "text": "..."}             <- test messages (Session 22)
@@ -14,19 +14,42 @@ import json
 import os
 import re
 import time
+from contextlib import nullcontext
 from pathlib import PurePosixPath
 from urllib.parse import unquote, urlparse
 
-from azure.cosmos import CosmosClient
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-from azure.servicebus import ServiceBusClient
-from azure.storage.blob import BlobClient
-from openai import OpenAI
+
+credential = DefaultAzureCredential()
+
+# Session 26: telemetry before the SDKs are imported, so Service Bus, Blob, Cosmos and OpenAI calls get traced
+if os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING"):
+    from azure.monitor.opentelemetry import configure_azure_monitor
+    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
+    configure_azure_monitor(credential=credential)
+    HTTPXClientInstrumentor().instrument()
+
+try:
+    from opentelemetry import trace
+
+    tracer = trace.get_tracer("rag-worker")
+except ImportError:
+    tracer = None
+
+
+def span(name):
+    return tracer.start_as_current_span(name) if tracer else nullcontext(None)
+
+
+from azure.cosmos import CosmosClient  # noqa: E402
+from azure.servicebus import ServiceBusClient  # noqa: E402
+from azure.storage.blob import BlobClient  # noqa: E402
+from openai import OpenAI  # noqa: E402
 
 QUEUE = os.getenv("QUEUE_NAME", "ingest")
 WORK_DELAY_SECONDS = float(os.getenv("WORK_DELAY_SECONDS", "0"))  # demo only: makes scaling visible
 
-credential = DefaultAzureCredential()
 ai = OpenAI(
     base_url=os.environ["OPENAI_ENDPOINT"] + "/openai/v1/",
     api_key=get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default"),
@@ -95,16 +118,24 @@ def main():
         while True:
             with client.get_queue_receiver(QUEUE, max_wait_time=30) as receiver:
                 for msg in receiver:
-                    try:
-                        source, text = read_message(str(msg))
-                        count = ingest(source, text)
-                        if WORK_DELAY_SECONDS:
-                            time.sleep(WORK_DELAY_SECONDS)
-                        receiver.complete_message(msg)
-                        log(status="ok", source=source, chunks=count, delivery=msg.delivery_count)
-                    except Exception as err:  # noqa: BLE001 - any failure = let Service Bus retry
-                        receiver.abandon_message(msg)
-                        log(status="failed", error=str(err)[:200], delivery=msg.delivery_count)
+                    # One span per message: the blob download, embeddings and Cosmos writes nest under it
+                    with span("ingest.document") as s:
+                        try:
+                            source, text = read_message(str(msg))
+                            count = ingest(source, text)
+                            if WORK_DELAY_SECONDS:
+                                time.sleep(WORK_DELAY_SECONDS)
+                            receiver.complete_message(msg)
+                            log(status="ok", source=source, chunks=count, delivery=msg.delivery_count)
+                            if s:
+                                s.set_attribute("ingest.source", source)
+                                s.set_attribute("ingest.chunks", count)
+                        except Exception as err:  # noqa: BLE001 - any failure = let Service Bus retry
+                            receiver.abandon_message(msg)
+                            log(status="failed", error=str(err)[:200], delivery=msg.delivery_count)
+                            if s:
+                                s.record_exception(err)  # shows up in the "exceptions" table
+                                s.set_attribute("ingest.delivery_count", msg.delivery_count)
 
 
 if __name__ == "__main__":

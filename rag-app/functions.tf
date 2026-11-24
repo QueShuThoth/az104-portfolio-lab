@@ -10,6 +10,9 @@
 # (as of 4.81) writes a key-based AzureWebJobsStorage setting even when you choose a
 # managed identity, which breaks a storage account with Shared Key off, and its workaround
 # leaves a change in every plan. azapi sends exactly what Microsoft's own Bicep sample sends.
+#
+# Session 26: two new app settings send the function's logs to Application Insights,
+# signed in with the managed identity (AAD) because local auth is off.
 
 # ---------- Cosmos DB: leases + summaries, sharing 400 RU/s ----------
 
@@ -116,6 +119,9 @@ resource "azapi_resource" "func" {
           { name = "COSMOS_ENDPOINT", value = azurerm_cosmosdb_account.rag.endpoint },
           { name = "OPENAI_ENDPOINT", value = "https://${azurerm_cognitive_account.foundry.custom_subdomain_name}.openai.azure.com" },
           { name = "CHAT_MODEL", value = azurerm_cognitive_deployment.chat.name },
+          # Session 26: logs and traces to Application Insights, authenticated with the identity
+          { name = "APPLICATIONINSIGHTS_CONNECTION_STRING", value = local.appi_connection_string },
+          { name = "APPLICATIONINSIGHTS_AUTHENTICATION_STRING", value = "ClientId=${azurerm_user_assigned_identity.app.client_id};Authorization=AAD" },
         ]
       }
       functionAppConfig = {
@@ -148,6 +154,7 @@ resource "azapi_resource" "func" {
   depends_on = [
     azurerm_role_assignment.app_func_storage,
     azurerm_cosmosdb_sql_container.leases,
+    azurerm_role_assignment.app_monitoring_publisher,
   ]
 }
 

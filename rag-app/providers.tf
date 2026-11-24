@@ -37,6 +37,12 @@ provider "azurerm" {
     storage {
       data_plane_available = false
     }
+    # Session 26: Azure normally adds a "Failure Anomalies" alert rule (and sometimes an
+    # action group) next to a new Application Insights. Terraform doesn't track those, so they
+    # could block end-of-day destroy. This tells Terraform to switch that extra rule off.
+    application_insights {
+      disable_generated_rule = true
+    }
   }
 }
 

@@ -1,5 +1,6 @@
 """Dev Diary RAG API (Session 18; v2 Session 21: JSON log line per /ask;
-v3 Session 25: settings from App Configuration, admin key from Key Vault).
+v3 Session 25: settings from App Configuration, admin key from Key Vault;
+v4 Session 26: OpenTelemetry traces to Application Insights).
 
 POST /ask {"question": "...", "session": 11}
   1. embed the question
@@ -16,27 +17,54 @@ Settings live in App Configuration under the "rag:" prefix:
 If APPCONFIG_ENDPOINT isn't set (running on the laptop), it falls back to env vars.
 
 No keys: DefaultAzureCredential uses your az login on the laptop, and the app's
-managed identity in Container Apps. The same credential reads Key Vault.
+managed identity in Container Apps. The same credential reads Key Vault and signs
+the telemetry it sends to Application Insights.
 """
 import json
 import os
 import secrets
 import threading
 import time
+from contextlib import nullcontext
 from datetime import datetime, timezone
 
-from azure.appconfiguration.provider import SettingSelector, load
-from azure.cosmos import CosmosClient
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-from fastapi import FastAPI, Header, HTTPException
-from openai import OpenAI
-from pydantic import BaseModel
+
+credential = DefaultAzureCredential()
+
+# ---------- Session 26: telemetry ----------
+# Set up before FastAPI, OpenAI and the Azure SDKs are imported, so their calls get traced:
+#   FastAPI requests -> "requests" table, Cosmos/App Config/Key Vault -> "dependencies" (Azure SDK),
+#   OpenAI calls -> "dependencies" (via httpx), and our own rag.* spans with token counts.
+if os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING"):
+    from azure.monitor.opentelemetry import configure_azure_monitor
+    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
+    configure_azure_monitor(credential=credential)  # Entra sign-in: local auth is off on App Insights
+    HTTPXClientInstrumentor().instrument()          # the OpenAI SDK talks over httpx
+
+try:
+    from opentelemetry import trace
+
+    tracer = trace.get_tracer("rag-api")
+except ImportError:  # laptop run without the telemetry packages: spans become no-ops
+    tracer = None
+
+
+def span(name):
+    return tracer.start_as_current_span(name) if tracer else nullcontext(None)
+
+
+from azure.appconfiguration.provider import SettingSelector, load  # noqa: E402
+from azure.cosmos import CosmosClient  # noqa: E402
+from fastapi import FastAPI, Header, HTTPException  # noqa: E402
+from openai import OpenAI  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
 
 EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
 APP_VERSION = os.getenv("APP_VERSION", "dev")
 APPCONFIG_ENDPOINT = os.getenv("APPCONFIG_ENDPOINT")
 
-credential = DefaultAzureCredential()
 ai = OpenAI(
     base_url=os.environ["OPENAI_ENDPOINT"] + "/openai/v1/",
     api_key=get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default"),
@@ -153,7 +181,8 @@ def ask(req: AskRequest):
     with _lock:
         chat_model, top_k = SETTINGS["chat_model"], SETTINGS["top_k"]
 
-    q_vec = ai.embeddings.create(model=EMBED_MODEL, input=req.question).data[0].embedding
+    with span("rag.embed"):
+        q_vec = ai.embeddings.create(model=EMBED_MODEL, input=req.question).data[0].embedding
 
     # Metadata filter + vector search in one query. The WHERE runs first, then the ranking.
     where = "WHERE c.session = @session " if req.session is not None else ""
@@ -161,26 +190,36 @@ def ask(req: AskRequest):
     if req.session is not None:
         params.append({"name": "@session", "value": req.session})
 
-    hits = list(chunks.query_items(
-        query=(
-            f"SELECT TOP {top_k} c.source, c.heading, c.text, VectorDistance(c.embedding, @q) AS score "
-            f"FROM c {where}ORDER BY VectorDistance(c.embedding, @q)"
-        ),
-        parameters=params,
-        enable_cross_partition_query=True,
-    ))
+    with span("rag.vector_search") as s:
+        hits = list(chunks.query_items(
+            query=(
+                f"SELECT TOP {top_k} c.source, c.heading, c.text, VectorDistance(c.embedding, @q) AS score "
+                f"FROM c {where}ORDER BY VectorDistance(c.embedding, @q)"
+            ),
+            parameters=params,
+            enable_cross_partition_query=True,
+        ))
+        if s:
+            s.set_attribute("rag.top_k", top_k)
+            s.set_attribute("rag.hits", len(hits))
     if not hits:
         return {"answer": "I found nothing to answer from.", "sources": [], "version": APP_VERSION}
 
     excerpts = "\n\n".join(f"[{h['source']}] {h['text']}" for h in hits)
-    reply = ai.chat.completions.create(
-        model=chat_model,
-        reasoning_effort="low",  # gpt-5-mini is a reasoning model; low = faster, fewer tokens
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Excerpts:\n{excerpts}\n\nQuestion: {req.question}"},
-        ],
-    )
+    with span("rag.chat") as s:
+        reply = ai.chat.completions.create(
+            model=chat_model,
+            reasoning_effort="low",  # gpt-5-mini is a reasoning model; low = faster, fewer tokens
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": f"Excerpts:\n{excerpts}\n\nQuestion: {req.question}"},
+            ],
+        )
+        if s:  # custom dimensions you can chart in KQL
+            s.set_attribute("gen_ai.request.model", chat_model)
+            s.set_attribute("gen_ai.usage.input_tokens", reply.usage.prompt_tokens)
+            s.set_attribute("gen_ai.usage.output_tokens", reply.usage.completion_tokens)
+            s.set_attribute("gen_ai.usage.total_tokens", reply.usage.total_tokens)
     # One structured log line per question. Container Apps ships stdout to Log Analytics,
     # where KQL can parse it with parse_json(Log_s).
     print(json.dumps({
